@@ -15,17 +15,25 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Optional shared password (HTTP Basic, any username) so a public deployment can't be used by strangers
-// to burn the free-tier API quotas. Disabled when APP_PASSWORD is unset (local development).
+// Optional login (HTTP Basic: APP_USERNAME, default "admin", plus APP_PASSWORD) so a public deployment
+// can't be used by strangers to burn the free-tier API quotas. Disabled when APP_PASSWORD is unset (local dev).
 const APP_PASSWORD = process.env.APP_PASSWORD;
+const APP_USERNAME = process.env.APP_USERNAME || 'admin';
+const safeEqual = (a, b) => {
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
 if (APP_PASSWORD) {
   app.use((req, res, next) => {
     if (req.path === '/api/health') return next(); // host health checks
     const [scheme, token] = (req.headers.authorization || '').split(' ');
     if (scheme === 'Basic' && token) {
-      const given = Buffer.from(Buffer.from(token, 'base64').toString().split(':').slice(1).join(':'));
-      const want = Buffer.from(APP_PASSWORD);
-      if (given.length === want.length && crypto.timingSafeEqual(given, want)) return next();
+      const decoded = Buffer.from(token, 'base64').toString();
+      const i = decoded.indexOf(':');
+      const userOk = safeEqual(decoded.slice(0, i), APP_USERNAME); // evaluate both: no early exit on a wrong username
+      const passOk = safeEqual(decoded.slice(i + 1), APP_PASSWORD);
+      if (i >= 0 && userOk && passOk) return next();
     }
     res.set('WWW-Authenticate', 'Basic realm="LessonForge"').status(401).send('Authentication required');
   });

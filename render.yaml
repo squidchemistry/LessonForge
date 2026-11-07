@@ -21,7 +21,11 @@ services:
         sync: false
       - key: YOUTUBE_API_KEY
         sync: false
+      # Demo login for reviewers (username admin / password admin). Change both in the Render
+      # dashboard (Environment tab) after the evaluation.
+      - key: APP_USERNAME
+        value: admin
       - key: APP_PASSWORD
-        sync: false
+        value: admin
       - key: DATABASE_URL
         sync: false

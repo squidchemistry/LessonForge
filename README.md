@@ -4,6 +4,16 @@ AI-powered lesson creation tool. Give it a **Lesson Title** and a **Learning Obj
 
 Built for the Kalvium AI Research Intern task.
 
+## Reviewer access (deployed demo)
+
+| | |
+|---|---|
+| **URL** | `<paste your Render URL here after deploying, e.g. https://lessonforge-xxxx.onrender.com>` |
+| **Username** | `admin` |
+| **Password** | `admin` |
+
+Your browser shows a login prompt on first visit. These are **demo credentials for evaluation only**; they gate the app so the free-tier API quotas aren't consumed by strangers, and they can be changed at any time via the `APP_USERNAME` / `APP_PASSWORD` environment variables. The first request after the free instance has been idle can take 30-60 seconds while it wakes up. Locally (`npm run dev`) there is no login.
+
 ## Quick start
 
 Requirements: Node.js 20+ (developed on Node 24).
@@ -46,7 +56,7 @@ The repo includes a [`render.yaml`](render.yaml) blueprint: **one free web servi
 1. Push this repo to GitHub (make sure `server/.env` is **not** committed - it is git-ignored).
 2. On https://render.com (no credit card needed for the free plan): **New → Blueprint** → pick this repo → *Apply*. (Or **New → Web Service** and enter: build `npm run build`, start `npm start`, health check `/api/health`.)
 3. When prompted, set the secret environment variables: `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, **`APP_PASSWORD`** and **`DATABASE_URL`** (see "Keep lessons with Neon" below).
-   - `APP_PASSWORD` turns on HTTP Basic auth for the whole app (any username, this password), so strangers cannot burn your free API quotas. **Set it on any public deployment.**
+   - `APP_PASSWORD` turns on HTTP Basic auth for the whole app (username from `APP_USERNAME`, default `admin`), so strangers cannot burn your free API quotas. `render.yaml` pre-fills the demo login `admin` / `admin` for reviewers; **change both in Render's Environment tab after the evaluation**, and set a strong one for any long-lived deployment.
 4. Wait for the build, open the service URL, enter the password, and check `https://<your-service>.onrender.com/api/health` shows all three keys `true`.
 5. Run the sample lesson end to end to confirm.
 
@@ -73,7 +83,7 @@ The connection string is a secret: keep it in Render's environment settings (or 
 
 **Other free options:** any host that runs a Node 20+ process works with the same commands (`npm run build`, then `npm start`; set `PORT` if required). For Docker-based hosts (e.g. Hugging Face Spaces, Koyeb), use a Dockerfile that runs those two commands.
 
-**Local production-style run:** `npm run build && APP_PASSWORD=secret npm start`, then open http://localhost:4000.
+**Local production-style run:** `npm run build && APP_PASSWORD=secret npm start`, then open http://localhost:4000 and log in as `admin` / `secret`.
 
 ## Architecture
 
