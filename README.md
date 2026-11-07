@@ -39,6 +39,200 @@ Title + Objective
 
 Each step is its own endpoint with status `idle | running | done | failed` and can be **retried independently**.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser["Browser - React + Vite (:5173)"]
+    UI["App.jsx<br/>sidebar + pipeline + tabs"]
+    TABS["Research | Lesson & Edit | QC 1 | QC 2 | Preview | Export"]
+    UI --- TABS
+  end
+
+  subgraph API["Express API (:4000)"]
+    ROUTES["index.js<br/>REST routes + validation"]
+    PIPE["pipeline.js<br/>step runner: status, retry, locks"]
+    RES["research.js"]
+    GEN["generate.js"]
+    QC["qc.js<br/>QC 1 + QC 2"]
+    LES["lesson.js<br/>normalize, patch, timing"]
+    MD["markdown.js + archiver<br/>export"]
+    LLM["gemini.js<br/>JSON mode, retry, model fallback"]
+    STORE[("store.js<br/>JSON file per lesson<br/>server/data/lessons")]
+    ROUTES --> PIPE
+    ROUTES --> LES
+    ROUTES --> MD
+    PIPE --> RES
+    PIPE --> GEN
+    PIPE --> QC
+    GEN --> LLM
+    QC --> LLM
+    GEN --> LES
+    PIPE --> STORE
+    ROUTES --> STORE
+  end
+
+  subgraph External["External services (free tiers)"]
+    GEMINI["Google Gemini API"]
+    TAVILY["Tavily web search"]
+    YT["YouTube Data API v3<br/>+ transcripts"]
+    OL["Open Library"]
+    WEB["Cited URLs<br/>(link check)"]
+  end
+
+  UI -- "HTTP /api (Vite proxy)" --> ROUTES
+  RES --> TAVILY
+  RES --> YT
+  RES --> OL
+  LLM --> GEMINI
+  QC -- "independent verification searches" --> TAVILY
+  QC -- "HEAD / oEmbed checks" --> WEB
+```
+
+**Request flow for one step** (e.g. *Generate*): the UI calls `POST /api/lessons/:id/steps/generate` → `pipeline.js` marks the step `running` → the handler reads the saved research pack, calls Gemini and normalizes the result → the outcome is applied onto the **latest** saved record (so edits saved meanwhile are kept) and the step is marked `done`, or `failed` with the error so it can be retried.
+
+## Data model (ER diagram)
+
+Lessons are stored as one JSON document each. The diagram shows the *logical* entities inside that document and how they relate.
+
+```mermaid
+erDiagram
+  LESSON_RECORD {
+    string id PK "12-char hex"
+    string title
+    string objective
+    int version "current version number"
+    datetime createdAt
+    datetime updatedAt
+  }
+  STEP_STATUS {
+    string step "research | generate | qc1 | qc2"
+    string status "idle | running | done | failed"
+    string error
+    string note
+    datetime startedAt
+    datetime finishedAt
+  }
+  RESEARCH_PACK {
+    datetime at
+    string_array warnings
+  }
+  SOURCE {
+    string id "S1, S2, ..."
+    string type "web | video | book"
+    string title
+    string url
+    string domain
+    string excerpt
+    string videoId "video only"
+    float minutes "video only"
+  }
+  LESSON_VERSION {
+    int v PK
+    string label "AI generated | Instructor edit | Applied F1 | Restored vN"
+    datetime at
+  }
+  LESSON_CONTENT {
+    string title
+    string objective
+    string summary
+    string_array learningOutcomes
+  }
+  SECTION {
+    string id
+    string heading
+    string kind "hook | concept | example | activity | check | wrap"
+    int minutes "all sections total 45"
+    string content "markdown with S-number citations"
+  }
+  QUIZ_QUESTION {
+    string id
+    string question
+    string_array options
+    int answerIndex
+    string explanation
+  }
+  VIDEO {
+    string sourceId FK
+    string why
+  }
+  REFERENCE {
+    string id FK "rebuilt from citations on save"
+    string note
+  }
+  QC_REPORT {
+    string layer "qc1 | qc2"
+    string verdict "pass | needs_revision | fail"
+    int score "0-100"
+    string summary
+    int forVersion "lesson version audited"
+    datetime at
+  }
+  QC_ISSUE {
+    string id "F1.. or I1.."
+    string severity "critical | major | minor"
+    string type
+    string sectionId
+    string problem
+    string evidence
+    string suggestion
+    string status "open | applied | dismissed"
+    json patch "op, sectionId, find, replace"
+  }
+  CLAIM_CHECK {
+    string sectionId
+    string claim
+    string status "supported | unsupported | misleading | incorrect | unverifiable"
+    string evidence
+  }
+  SOURCE_ASSESSMENT {
+    string sourceId FK
+    string reliability
+    string relevance
+    string note
+  }
+  LINK_CHECK {
+    string url
+    string status "ok | broken | blocked | unreachable"
+    int code
+  }
+  OBJECTIVE_PART {
+    string part
+    string coverage "full | partial | missing"
+    string taughtIn
+    string assessedBy
+  }
+  DIMENSION_SCORE {
+    string name
+    int score "1-5"
+    string note
+  }
+
+  LESSON_RECORD ||--|{ STEP_STATUS : "tracks 4 steps"
+  LESSON_RECORD ||--o| RESEARCH_PACK : "has"
+  RESEARCH_PACK ||--|{ SOURCE : "contains"
+  LESSON_RECORD ||--o{ LESSON_VERSION : "immutable history"
+  LESSON_VERSION ||--|| LESSON_CONTENT : "snapshot of"
+  LESSON_CONTENT ||--|{ SECTION : "has"
+  LESSON_CONTENT ||--o{ QUIZ_QUESTION : "knowledge check"
+  LESSON_CONTENT ||--o{ VIDEO : "supplementary"
+  LESSON_CONTENT ||--o{ REFERENCE : "lists"
+  VIDEO }o--|| SOURCE : "points to"
+  REFERENCE }o--|| SOURCE : "cites"
+  LESSON_RECORD ||--o| QC_REPORT : "latest qc1 and qc2"
+  QC_REPORT }o--|| LESSON_VERSION : "audits"
+  QC_REPORT ||--o{ QC_ISSUE : "raises"
+  QC_ISSUE }o--o| SECTION : "located in"
+  QC_REPORT ||--o{ CLAIM_CHECK : "qc1 only"
+  QC_REPORT ||--o{ SOURCE_ASSESSMENT : "qc1 only"
+  QC_REPORT ||--o{ LINK_CHECK : "qc1 only"
+  QC_REPORT ||--o{ OBJECTIVE_PART : "qc2 only"
+  QC_REPORT ||--o{ DIMENSION_SCORE : "qc2 only"
+  SOURCE_ASSESSMENT }o--|| SOURCE : "rates"
+```
+
+Key relationships: **citations are foreign keys** into the research pack (anything not in the pack is stripped), a **QC report audits a specific lesson version** (so it is flagged stale after later edits), and **applying a QC issue's patch creates a new `LESSON_VERSION`** rather than mutating history.
+
 ### Design decisions (and why)
 
 - **Citations can't be hallucinated.** The generator may only cite ids from the fetched source pack. After generation, code (`normalizeLesson`) strips citations to unknown ids, accepts videos only if they are real pack entries, and **rebuilds the reference list and video URLs from the pack**, never from model text.
