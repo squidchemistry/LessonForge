@@ -1,19 +1,35 @@
+import './env.js'; // must stay first: loads server/.env before other modules read process.env
+import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
-dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env') });
-
 import express from 'express';
 import cors from 'cors';
 import archiver from 'archiver';
 import { createLesson, getLesson, listLessons, deleteLesson, update, addVersion, recoverInterruptedSteps } from './store.js';
-import { runStep, STEP_NAMES } from './pipeline.js';
+import { startStep, STEP_NAMES } from './pipeline.js';
 import { normalizeLesson, applyPatch } from './lesson.js';
 import { lessonMd, referencesMd, qcMd } from './markdown.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+// Optional shared password (HTTP Basic, any username) so a public deployment can't be used by strangers
+// to burn the free-tier API quotas. Disabled when APP_PASSWORD is unset (local development).
+const APP_PASSWORD = process.env.APP_PASSWORD;
+if (APP_PASSWORD) {
+  app.use((req, res, next) => {
+    if (req.path === '/api/health') return next(); // host health checks
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Basic' && token) {
+      const given = Buffer.from(Buffer.from(token, 'base64').toString().split(':').slice(1).join(':'));
+      const want = Buffer.from(APP_PASSWORD);
+      if (given.length === want.length && crypto.timingSafeEqual(given, want)) return next();
+    }
+    res.set('WWW-Authenticate', 'Basic realm="LessonForge"').status(401).send('Authentication required');
+  });
+}
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -45,10 +61,17 @@ app.delete('/api/lessons/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Steps run in the background: this returns 202 immediately with the step marked "running";
+// clients poll GET /api/lessons/:id. Add ?wait=1 to block until the step finishes (CLI scripts/tests).
 app.post('/api/lessons/:id/steps/:step', wrap(async (req, res) => {
   if (!STEP_NAMES.includes(req.params.step)) throw httpError(400, 'Unknown step');
-  const rec = await runStep(req.params.id, req.params.step);
-  res.json({ ...rec, versions: rec.versions.map(({ v, at, label }) => ({ v, at, label })) });
+  const { done } = await startStep(req.params.id, req.params.step);
+  if (req.query.wait) {
+    const result = await done;
+    if (!result.ok) throw Object.assign(httpError(502, result.error), { stepFailed: true });
+  }
+  const rec = await need(req.params.id);
+  res.status(req.query.wait ? 200 : 202).json({ ...rec, versions: rec.versions.map(({ v, at, label }) => ({ v, at, label })) });
 }));
 
 // Instructor edit -> saved as a new version (history is never overwritten).
@@ -135,6 +158,13 @@ app.get('/api/lessons/:id/export.zip', wrap(async (req, res) => {
 }));
 
 app.use('/api', (_req, _res, next) => next(httpError(404, 'Not found')));
+
+// In production the built React app is served by this same process (one free-tier service, no CORS).
+const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
+if (fs.existsSync(path.join(dist, 'index.html'))) {
+  app.use(express.static(dist));
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(dist, 'index.html')));
+}
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {

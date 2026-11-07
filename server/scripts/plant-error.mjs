@@ -16,7 +16,7 @@ lesson.sections.find((s) => s.kind === 'wrap').content += '\n\nRemember: 3xx cod
 rec = await call('PUT', `/lessons/${id}/lesson`, { lesson, label: 'PLANTED ERRORS (QC demo)' });
 console.log('saved planted version', rec.version);
 for (const step of ['qc1', 'qc2']) {
-  rec = await call('POST', `/lessons/${id}/steps/${step}`);
+  rec = await call('POST', `/lessons/${id}/steps/${step}?wait=1`);
   const r = rec[step];
   console.log(`\n=== ${step}: ${r.verdict} ${r.score}/100`);
   r.issues.forEach((i) => console.log(`  ${i.id} [${i.severity}/${i.type}] ${i.problem.slice(0, 150)} ${i.patch ? '(auto-fix available)' : ''}`));

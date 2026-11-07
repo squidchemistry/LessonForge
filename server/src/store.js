@@ -6,7 +6,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/lessons');
+// DATA_DIR lets a host point storage at a mounted disk/volume.
+const DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR, 'lessons')
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/lessons');
 await fs.mkdir(DIR, { recursive: true });
 
 const file = (id) => path.join(DIR, `${id}.json`);

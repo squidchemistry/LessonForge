@@ -39,6 +39,27 @@ Title + Objective
 
 Each step is its own endpoint with status `idle | running | done | failed` and can be **retried independently**.
 
+## Deploy on a free tier (Render)
+
+The repo includes a [`render.yaml`](render.yaml) blueprint: **one free web service** that serves both the API and the built React UI (no CORS, one URL).
+
+1. Push this repo to GitHub (make sure `server/.env` is **not** committed - it is git-ignored).
+2. On https://render.com (no credit card needed for the free plan): **New → Blueprint** → pick this repo → *Apply*. (Or **New → Web Service** and enter: build `npm run build`, start `npm start`, health check `/api/health`.)
+3. When prompted, set the secret environment variables: `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY` and **`APP_PASSWORD`**.
+   - `APP_PASSWORD` turns on HTTP Basic auth for the whole app (any username, this password), so strangers cannot burn your free API quotas. **Set it on any public deployment.**
+4. Wait for the build, open the service URL, enter the password, and check `https://<your-service>.onrender.com/api/health` shows all three keys `true`.
+5. Run the sample lesson end to end to confirm.
+
+**Free-tier caveats** (design accordingly, and mention them in a demo):
+- **No persistent disk.** Lessons live in `server/data`, which is wiped whenever the free instance restarts or redeploys. **Export your lesson ZIP before leaving.** To keep data, use a paid plan with a disk and set `DATA_DIR` to its mount path.
+- **Sleeps after ~15 min idle**; the first request after that takes ~30-60 s while it wakes. A step already running when the instance sleeps is marked *failed* and can be retried.
+- **Long steps don't hold a request open.** `POST /api/lessons/:id/steps/:step` returns `202` immediately and the UI polls for the result, so a 2-4 minute generation works behind a host's proxy timeouts. (Add `?wait=1` to block, used by the CLI scripts.)
+- Gemini / Tavily / YouTube free quotas still apply; the shared password is what protects them.
+
+**Other free options:** any host that runs a Node 20+ process works with the same commands (`npm run build`, then `npm start`; set `PORT` if required). For Docker-based hosts (e.g. Hugging Face Spaces, Koyeb), use a Dockerfile that runs those two commands.
+
+**Local production-style run:** `npm run build && APP_PASSWORD=secret npm start`, then open http://localhost:4000.
+
 ## Architecture
 
 ```mermaid
@@ -89,7 +110,7 @@ flowchart LR
   QC -- "HEAD / oEmbed checks" --> WEB
 ```
 
-**Request flow for one step** (e.g. *Generate*): the UI calls `POST /api/lessons/:id/steps/generate` → `pipeline.js` marks the step `running` → the handler reads the saved research pack, calls Gemini and normalizes the result → the outcome is applied onto the **latest** saved record (so edits saved meanwhile are kept) and the step is marked `done`, or `failed` with the error so it can be retried.
+**Request flow for one step** (e.g. *Generate*): the UI calls `POST /api/lessons/:id/steps/generate` → `pipeline.js` marks the step `running` and the API replies `202` right away → in the background the handler reads the saved research pack, calls Gemini and normalizes the result → the outcome is applied onto the **latest** saved record (so edits saved meanwhile are kept) and the step is marked `done`, or `failed` with the error so it can be retried. Meanwhile the UI polls `GET /api/lessons/:id` until the step leaves `running`.
 
 ## Data model (ER diagram)
 

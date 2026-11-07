@@ -70,8 +70,17 @@ export default function App() {
     setBusy((b) => ({ ...b, [step]: true }));
     setRec((r) => (r ? { ...r, steps: { ...r.steps, [step]: { ...r.steps[step], status: 'running', error: null } } } : r));
     try {
-      const out = await api.runStep(id, step);
-      if (selRef.current === id) { setRec(out); if (step === 'generate') { setDirty(false); setTab('lesson'); } }
+      await api.runStep(id, step); // returns immediately (202); the server works in the background
+      // Poll until the step leaves "running". Tolerate a few transient network errors (e.g. a host waking up).
+      let out;
+      for (let misses = 0; ;) {
+        await new Promise((r) => setTimeout(r, 2500));
+        try { out = await api.get(id); misses = 0; } catch (err) { if (++misses >= 6) throw err; continue; }
+        if (selRef.current === id) setRec(out);
+        if (out.steps[step].status !== 'running') break;
+      }
+      if (out.steps[step].status === 'failed') throw new Error(out.steps[step].error || 'unknown error');
+      if (selRef.current === id && step === 'generate') { setDirty(false); setTab('lesson'); }
       if (step === 'research' && out.steps.research.note) say(`Research finished with notes: ${out.steps.research.note}`, true);
       refreshList();
       return true;

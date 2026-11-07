@@ -12,7 +12,7 @@ console.log('lesson', rec.id);
 for (const step of (process.env.STEPS || 'research,generate,qc1,qc2').split(',')) {
   const t = Date.now();
   try {
-    rec = await call('POST', `/lessons/${rec.id}/steps/${step}`);
+    rec = await call('POST', `/lessons/${rec.id}/steps/${step}?wait=1`);
     console.log(`${step}: done in ${((Date.now() - t) / 1000).toFixed(1)}s`, rec.steps[step].note || '');
   } catch (e) {
     console.log(`${step}: FAILED -> ${e.message}`);

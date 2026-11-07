@@ -1,0 +1,24 @@
+# Render Blueprint: one free web service that serves both the API and the built React UI.
+# Free plan = no persistent disk (lessons are lost when the instance restarts) and the
+# instance sleeps after ~15 min idle. Export lessons (ZIP) before leaving.
+services:
+  - type: web
+    name: lessonforge
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: GEMINI_MODELS
+        value: gemini-3.5-flash,gemini-3.5-flash-lite
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false

@@ -52,28 +52,40 @@ const handlers = {
 
 export const STEP_NAMES = Object.keys(handlers);
 
-export async function runStep(id, step) {
+/**
+ * Start a step. Returns as soon as the step is marked "running"; the work continues in the
+ * background (so no HTTP request has to stay open for minutes - free hosts/proxies time out).
+ * `done` resolves to { ok, error } when the step finishes. A step failure never throws out of it.
+ */
+export async function startStep(id, step) {
   const key = `${id}:${step}`;
   if (running.has(key)) throw Object.assign(new Error(`Step "${step}" is already running.`), { status: 409 });
   running.add(key);
   try {
-    const rec = await getLesson(id);
-    if (!rec) throw Object.assign(new Error('Lesson not found'), { status: 404 });
+    if (!(await getLesson(id))) throw Object.assign(new Error('Lesson not found'), { status: 404 });
     await update(id, (r) => { r.steps[step] = { status: 'running', error: null, note: null, startedAt: new Date().toISOString(), finishedAt: null }; });
+  } catch (e) {
+    running.delete(key);
+    throw e;
+  }
+  const done = (async () => {
     try {
       const fresh = await getLesson(id);
+      if (!fresh) throw new Error('Lesson was deleted while the step was running.');
       const { apply, note } = await handlers[step](fresh);
       // Apply onto the *latest* record so edits saved meanwhile are preserved.
-      return await update(id, (r) => {
+      await update(id, (r) => {
         apply(r);
         r.steps[step] = { status: 'done', error: null, note: note || null, startedAt: r.steps[step].startedAt, finishedAt: new Date().toISOString() };
       });
+      return { ok: true };
     } catch (e) {
       console.error(`[${id}] step ${step} failed:`, e.message);
-      await update(id, (r) => { r.steps[step] = { ...r.steps[step], status: 'failed', error: e.message, finishedAt: new Date().toISOString() }; });
-      throw Object.assign(e, { stepFailed: true });
+      await update(id, (r) => { r.steps[step] = { ...r.steps[step], status: 'failed', error: e.message, finishedAt: new Date().toISOString() }; }).catch(() => {});
+      return { ok: false, error: e.message };
+    } finally {
+      running.delete(key);
     }
-  } finally {
-    running.delete(key);
-  }
+  })();
+  return { done };
 }
