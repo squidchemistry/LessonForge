@@ -8,7 +8,7 @@ Built for the Kalvium AI Research Intern task.
 
 | | |
 |---|---|
-| **URL** | `<paste your Render URL here after deploying, e.g. https://lessonforge-xxxx.onrender.com>` |
+| **URL** | https://lessonforge-cvc1.onrender.com/ |
 | **Username** | `admin` |
 | **Password** | `admin` |
 
