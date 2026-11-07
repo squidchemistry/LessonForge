@@ -45,13 +45,28 @@ The repo includes a [`render.yaml`](render.yaml) blueprint: **one free web servi
 
 1. Push this repo to GitHub (make sure `server/.env` is **not** committed - it is git-ignored).
 2. On https://render.com (no credit card needed for the free plan): **New → Blueprint** → pick this repo → *Apply*. (Or **New → Web Service** and enter: build `npm run build`, start `npm start`, health check `/api/health`.)
-3. When prompted, set the secret environment variables: `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY` and **`APP_PASSWORD`**.
+3. When prompted, set the secret environment variables: `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, **`APP_PASSWORD`** and **`DATABASE_URL`** (see "Keep lessons with Neon" below).
    - `APP_PASSWORD` turns on HTTP Basic auth for the whole app (any username, this password), so strangers cannot burn your free API quotas. **Set it on any public deployment.**
 4. Wait for the build, open the service URL, enter the password, and check `https://<your-service>.onrender.com/api/health` shows all three keys `true`.
 5. Run the sample lesson end to end to confirm.
 
+### Keep lessons with Neon (free Postgres)
+
+Render's free plan has no persistent disk, so by default lessons are wiped on every restart. Point the app at a free [Neon](https://neon.tech) Postgres database and they are kept permanently:
+
+1. Sign up at https://neon.tech (no card), create a project, and copy the **connection string** (`postgresql://user:pass@ep-xxxx.neon.tech/neondb?sslmode=require`).
+2. In Render → your service → **Environment**, set `DATABASE_URL` to that string. The app creates the `lessons` table itself on startup; the logs print `Storage: postgres`.
+3. *(Optional)* copy your local lessons into Neon once, from your computer:
+   ```bash
+   cd server
+   DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require" node scripts/import-lessons.mjs
+   ```
+   (PowerShell: `$env:DATABASE_URL="..."; node scripts/import-lessons.mjs`). It copies every file in `server/data/lessons/` and is safe to re-run.
+
+The connection string is a secret: keep it in Render's environment settings (or your local `server/.env`), never in the repo. Locally, leave `DATABASE_URL` empty to keep using JSON files.
+
 **Free-tier caveats** (design accordingly, and mention them in a demo):
-- **No persistent disk.** Lessons live in `server/data`, which is wiped whenever the free instance restarts or redeploys. **Export your lesson ZIP before leaving.** To keep data, use a paid plan with a disk and set `DATA_DIR` to its mount path.
+- **Without `DATABASE_URL`, no persistence.** Lessons live in `server/data`, which is wiped whenever the free instance restarts or redeploys, so export your ZIP before leaving. With Neon configured, lessons are kept (Neon's free tier has a small storage cap and pauses idle compute, so the first query after a pause can take a second or two).
 - **Sleeps after ~15 min idle**; the first request after that takes ~30-60 s while it wakes. A step already running when the instance sleeps is marked *failed* and can be retried.
 - **Long steps don't hold a request open.** `POST /api/lessons/:id/steps/:step` returns `202` immediately and the UI polls for the result, so a 2-4 minute generation works behind a host's proxy timeouts. (Add `?wait=1` to block, used by the CLI scripts.)
 - Gemini / Tavily / YouTube free quotas still apply; the shared password is what protects them.
@@ -79,7 +94,7 @@ flowchart LR
     LES["lesson.js<br/>normalize, patch, timing"]
     MD["markdown.js + archiver<br/>export"]
     LLM["gemini.js<br/>JSON mode, retry, model fallback"]
-    STORE[("store.js<br/>JSON file per lesson<br/>server/data/lessons")]
+    STORE[("store.js<br/>Postgres (Neon) if DATABASE_URL<br/>else JSON files in server/data")]
     ROUTES --> PIPE
     ROUTES --> LES
     ROUTES --> MD
@@ -114,7 +129,7 @@ flowchart LR
 
 ## Data model (ER diagram)
 
-Lessons are stored as one JSON document each. The diagram shows the *logical* entities inside that document and how they relate.
+Lessons are stored as one JSON document each (a `jsonb` column in Postgres, or one file). The diagram shows the *logical* entities inside that document and how they relate.
 
 ```mermaid
 erDiagram
@@ -263,7 +278,7 @@ Key relationships: **citations are foreign keys** into the research pack (anythi
 - **Recommendations are patches.** Each QC issue may carry an exact `find → replace` (or append) patch, validated against the real lesson text before it is shown. "Apply" creates a new lesson version; stale patches are refused with a clear message.
 - **No work is ever lost.** Every save, applied fix, restore and regeneration is a new immutable *version*. All writes re-read the latest record under a per-lesson queue, so a slow AI step can't overwrite edits made while it ran. Steps left "running" by a crash are marked failed on startup so they can be retried. QC reports are marked stale when the lesson changes.
 - **Graceful degradation.** If YouTube or books fail, research continues with a warning; if web search fails, the step fails clearly (no sources → no grounded lesson) and can be retried. Gemini calls retry with backoff and fall back across models; invalid JSON is retried.
-- **Storage** is one JSON file per lesson in `server/data/lessons/` (zero setup, easy to inspect). Swap in SQLite if you need multi-user.
+- **Storage** is one JSON document per lesson behind a small interface (`store.js`) with two backends: **PostgreSQL** (a single `lessons(id, data jsonb)` table; used when `DATABASE_URL` is set, e.g. free Neon) and **JSON files** (zero-setup local default). Updates are serialised per lesson - `SELECT ... FOR UPDATE` in Postgres, an in-process queue for files - so concurrent saves and long AI steps never overwrite each other. Verified with 8 concurrent saves producing 8 distinct versions.
 
 ## Project layout
 

@@ -1,6 +1,7 @@
 # Render Blueprint: one free web service that serves both the API and the built React UI.
-# Free plan = no persistent disk (lessons are lost when the instance restarts) and the
-# instance sleeps after ~15 min idle. Export lessons (ZIP) before leaving.
+# The free plan has no persistent disk, so set DATABASE_URL (free Neon Postgres) to keep lessons
+# across restarts/redeploys. Without it, lessons are stored on the ephemeral disk and are lost.
+# The instance also sleeps after ~15 min idle (first request afterwards is slow).
 services:
   - type: web
     name: lessonforge
@@ -21,4 +22,6 @@ services:
       - key: YOUTUBE_API_KEY
         sync: false
       - key: APP_PASSWORD
+        sync: false
+      - key: DATABASE_URL
         sync: false
